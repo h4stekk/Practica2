@@ -6,25 +6,55 @@ from pytube import YouTube
 import os
 from moviepy.editor import *
 import requests
+from moviepy.editor import VideoFileClip
 from edit import BTOKEN
+
 
 ytmusic = YTMusic()
 connection = sqlite3.connect('bd.db', check_same_thread=False)
 cursor = connection.cursor()
 bot = telebot.TeleBot(BTOKEN, parse_mode=None)
 
+AUDD_API_TOKEN = 'b80caadc7757a78e5779d862704b4070'  
+
 @bot.message_handler(commands=['start'])
 def welcome(message):
-	mainkeyboard = InlineKeyboardMarkup()
-	mainkeyboard.row_width = 2
-	mainkeyboard.add(InlineKeyboardButton("Мої треки 🎵", callback_data="playlist"))
-	bot.send_message(message.chat.id, "<b>Привіт, я бот, який допоможе завантажити будь-яку пісню в 2 кліки!</b>\n\n• Щоб знайти трек - введіть автора, назву трека або просто слова.\n• Зберігайте понадобивші пісні!\n• Обкладинки альбомів додаються!\n", reply_markup=mainkeyboard, parse_mode='html')
-	cursor.execute(f"select userid from users where userid={message.chat.id}")
-	data = cursor.fetchall()
-	if not data:
-		cursor.execute(f"INSERT INTO users(name,userid,username,cachehistory) VALUES('{message.chat.first_name}','{message.chat.id}','{message.chat.username}','none');")
-		connection.commit()
+    mainkeyboard = InlineKeyboardMarkup()
+    mainkeyboard.row_width = 2
+    mainkeyboard.add(InlineKeyboardButton("Мої треки 🎵", callback_data="playlist"))
+    mainkeyboard.add(InlineKeyboardButton("Шукати по відео 🎥", callback_data="search_video"))
+    bot.send_message(message.chat.id, "<b>Привіт, я бот, який допоможе завантажити будь-яку пісню в 2 кліки!</b>\n\n• Щоб знайти трек - введіть автора, назву трека або просто слова.\n• Зберігайте понадобивші пісні!\n• Обкладинки альбомів додаються!\n", reply_markup=mainkeyboard, parse_mode='html')
+    cursor.execute(f"select userid from users where userid={message.chat.id}")
+    data = cursor.fetchall()
+    if not data:
+        cursor.execute(f"INSERT INTO users(name,userid,username,cachehistory) VALUES('{message.chat.first_name}','{message.chat.id}','{message.chat.username}','none');")
+        connection.commit()
 
+@bot.message_handler(content_types=['video'])
+def handle_video(message):
+    file_info = bot.get_file(message.video.file_id)
+    downloaded_file = bot.download_file(file_info.file_path)
+    with open('video.mp4', 'wb') as new_file:
+        new_file.write(downloaded_file)
+    audio_path = 'audio.mp3'
+    video = VideoFileClip('video.mp4')
+    video.audio.write_audiofile(audio_path)
+    result = recognize_music(audio_path, message)
+
+def recognize_music(file_path, message):
+    with open(file_path, 'rb') as f:
+        files = {'file': f}
+        data = {'api_token': AUDD_API_TOKEN, 'return': 'apple_music,spotify'}
+        response = requests.post('https://api.audd.io/', data=data, files=files)
+        result = response.json()
+        if result['status'] == 'success' and result['result']:
+            song = result['result']['title']
+            artist = result['result']['artist']
+            back_button = InlineKeyboardMarkup().add(InlineKeyboardButton("Назад", callback_data="main"))
+            bot.reply_to(message, f'Назва пісні: {artist} - {song}', reply_markup=back_button)
+        else:
+            bot.reply_to(message, 'Не удалось распознать аудио.')
+		
 @bot.message_handler(content_types=["text"])
 def search(message):
 	songsearch = InlineKeyboardMarkup()
@@ -86,6 +116,9 @@ def preceding(message):
 	else:
 		bot.send_message(message.chat.id, 'Нічого не знайдено :(', parse_mode='html')	
 
+def auto_shazam(message):
+	bot.send_message(message.chat.id, 'Привет! Отправь мне видеофайл в формате MP4, и я попытаюсь распознать музыку.')
+	
 def playlist(message):
 	playlistsong = InlineKeyboardMarkup()
 	playlistsong.row_width = 3
@@ -184,6 +217,8 @@ def checkadd(message, songid):
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
+	if call.data.split("=")[0] == "search_video":
+		bot.send_message(call.message.chat.id, "Відправ мені файл у форматі MP4, щоб я зміг розпізнати пісню яка тобі потрібна.")
 	if call.data.split("=")[0] == "artists":
 		artists(call.message, call.data.split("=")[1])
 	if call.data.split("=")[0] == "song":
